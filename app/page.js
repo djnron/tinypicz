@@ -8,7 +8,7 @@ const PASSCODE_STORAGE_KEY = "photo-wall-upload-passcode";
 export default function WallPage() {
   const [photos, setPhotos] = useState([]);
   const [loaded, setLoaded] = useState(false);
-  const [tileSize, setTileSize] = useState(0);
+  const [rowCounts, setRowCounts] = useState([]);
   const [hoveredId, setHoveredId] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -33,15 +33,28 @@ export default function WallPage() {
     return () => clearInterval(interval);
   }, [fetchPhotos]);
 
-  // Tile size = the shared "wall" dimension divided by how many photos are
-  // on it: 1 photo is full size (1:1), 2 photos are half (1:2), 3 photos a
-  // third (1:3), and so on, shrinking toward 1px as more get added.
+  // The wall always fills the whole screen: photos are arranged into rows
+  // so that, together, they cover 100% of the viewport. 1 photo fills the
+  // page (1:1), 2 photos split it exactly in half (1:2), 3 split it into
+  // thirds (1:3) — and as more get added, they pack into more rows,
+  // shrinking each photo further, all the way down toward 1px.
   useEffect(() => {
     function recompute() {
-      const base = Math.min(window.innerWidth, window.innerHeight);
-      const count = Math.max(photos.length, 1);
-      const size = Math.max(1, Math.floor(base / count));
-      setTileSize(size);
+      const count = photos.length;
+      if (count === 0) {
+        setRowCounts([]);
+        return;
+      }
+      const aspect = window.innerWidth / Math.max(window.innerHeight, 1);
+      let rows = Math.round(Math.sqrt(count / aspect));
+      rows = Math.max(1, Math.min(rows, count));
+      const base = Math.floor(count / rows);
+      const extra = count % rows;
+      const counts = [];
+      for (let i = 0; i < rows; i++) {
+        counts.push(base + (i < extra ? 1 : 0));
+      }
+      setRowCounts(counts);
     }
     recompute();
     window.addEventListener("resize", recompute);
@@ -133,42 +146,59 @@ export default function WallPage() {
 
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(auto-fill, minmax(${tileSize}px, ${tileSize}px))`,
-          gridAutoRows: `${tileSize}px`,
-          gap: 0,
+          display: "flex",
+          flexDirection: "column",
           width: "100vw",
+          height: "100vh",
         }}
       >
-        {photos.map((photo) => (
-          <div
-            key={photo.id}
-            onMouseEnter={() => setHoveredId(photo.id)}
-            onMouseLeave={() => setHoveredId(null)}
-            onTouchStart={() => setHoveredId(photo.id)}
-            onTouchEnd={() => setHoveredId(null)}
-            style={{
-              width: tileSize,
-              height: tileSize,
-              overflow: "hidden",
-              position: "relative",
-              background: "#1a1a1c",
-            }}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={photo.url}
-              alt=""
-              loading="lazy"
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                display: "block",
-              }}
-            />
-          </div>
-        ))}
+        {(() => {
+          let idx = 0;
+          return rowCounts.map((rowCount, rowIndex) => {
+            const rowPhotos = photos.slice(idx, idx + rowCount);
+            idx += rowCount;
+            return (
+              <div
+                key={rowIndex}
+                style={{
+                  display: "flex",
+                  flex: 1,
+                  minHeight: 0,
+                }}
+              >
+                {rowPhotos.map((photo) => (
+                  <div
+                    key={photo.id}
+                    onMouseEnter={() => setHoveredId(photo.id)}
+                    onMouseLeave={() => setHoveredId(null)}
+                    onTouchStart={() => setHoveredId(photo.id)}
+                    onTouchEnd={() => setHoveredId(null)}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: "hidden",
+                      position: "relative",
+                      background: "#1a1a1c",
+                    }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={photo.url}
+                      alt=""
+                      loading="lazy"
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "cover",
+                        display: "block",
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            );
+          });
+        })()}
       </div>
 
       {hoveredId &&
