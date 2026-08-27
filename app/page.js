@@ -9,7 +9,7 @@ export default function WallPage() {
   const [photos, setPhotos] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [rowCounts, setRowCounts] = useState([]);
-  const [hoveredId, setHoveredId] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const fileInputRef = useRef(null);
@@ -169,16 +169,14 @@ export default function WallPage() {
                 {rowPhotos.map((photo) => (
                   <div
                     key={photo.id}
-                    onMouseEnter={() => setHoveredId(photo.id)}
-                    onMouseLeave={() => setHoveredId(null)}
-                    onTouchStart={() => setHoveredId(photo.id)}
-                    onTouchEnd={() => setHoveredId(null)}
+                    onClick={() => setSelectedId(photo.id)}
                     style={{
                       flex: 1,
                       minWidth: 0,
                       overflow: "hidden",
                       position: "relative",
                       background: "#1a1a1c",
+                      cursor: "pointer",
                     }}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -201,12 +199,13 @@ export default function WallPage() {
         })()}
       </div>
 
-      {hoveredId &&
+      {selectedId &&
         (() => {
-          const photo = photos.find((p) => p.id === hoveredId);
+          const photo = photos.find((p) => p.id === selectedId);
           if (!photo) return null;
           return (
             <div
+              onClick={() => setSelectedId(null)}
               style={{
                 position: "fixed",
                 inset: 0,
@@ -215,7 +214,7 @@ export default function WallPage() {
                 alignItems: "center",
                 justifyContent: "center",
                 zIndex: 1000,
-                pointerEvents: "none",
+                cursor: "pointer",
               }}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
