@@ -5,10 +5,61 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const POLL_MS = 5000;
 const PASSCODE_STORAGE_KEY = "photo-wall-upload-passcode";
 
+// How elongated a single photo may get before we'd rather leave a slot or
+// two empty than render slivers. 2.5 means a photo never gets more than
+// 2.5x wider than it is tall, or vice versa.
+const MAX_SKEW = Math.log(2.5);
+
+// Pick the grid for `count` photos, given that it must have at least
+// `minSlots` cells. Every cell is the same size, so whatever this returns,
+// all photos render identically.
+function bestGrid(count, minSlots, vw, vh) {
+  const need = Math.max(count, minSlots, 1);
+
+  // Preferred: use every slot exactly, wasting no space.
+  let exact = null;
+  for (let rows = 1; rows <= need; rows++) {
+    if (need % rows !== 0) continue;
+    const cols = need / rows;
+    const skew = Math.abs(Math.log(vw / cols / (vh / rows)));
+    if (!exact || skew < exact.skew) exact = { rows, cols, skew };
+  }
+  if (exact && exact.skew <= MAX_SKEW) {
+    return { cols: exact.cols, rows: exact.rows };
+  }
+
+  // Fallback for counts like 7 or 13, where an exact fit would mean very
+  // thin photos: the best-shaped grid that still holds them all.
+  let best = null;
+  for (let rows = 1; rows <= need; rows++) {
+    const cols = Math.ceil(need / rows);
+    const cw = vw / cols;
+    const ch = vh / rows;
+    const score = (cw * ch) / (1 + Math.abs(Math.log(cw / ch)));
+    if (!best || score > best.score) best = { rows, cols, score };
+  }
+  return { cols: best.cols, rows: best.rows };
+}
+
+// Walk up from 1 photo to `count`, never letting the grid give back slots.
+// Without this, a count that happens to factor tidily (14 = 7x2) would make
+// every photo grow compared to the count before it (13), which reads as a
+// glitch: adding a photo should only ever take space away.
+function computeGrid(count, vw, vh) {
+  if (count <= 0) return { cols: 1, rows: 1 };
+  let slots = 1;
+  let chosen = { cols: 1, rows: 1 };
+  for (let n = 1; n <= count; n++) {
+    chosen = bestGrid(n, slots, vw, vh);
+    slots = chosen.cols * chosen.rows;
+  }
+  return chosen;
+}
+
 export default function WallPage() {
   const [photos, setPhotos] = useState([]);
   const [loaded, setLoaded] = useState(false);
-  const [rowCounts, setRowCounts] = useState([]);
+  const [grid, setGrid] = useState({ cols: 1, rows: 1 });
   const [selectedId, setSelectedId] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -33,28 +84,15 @@ export default function WallPage() {
     return () => clearInterval(interval);
   }, [fetchPhotos]);
 
-  // The wall always fills the whole screen: photos are arranged into rows
-  // so that, together, they cover 100% of the viewport. 1 photo fills the
-  // page (1:1), 2 photos split it exactly in half (1:2), 3 split it into
-  // thirds (1:3) — and as more get added, they pack into more rows,
-  // shrinking each photo further, all the way down toward 1px.
   useEffect(() => {
     function recompute() {
-      const count = photos.length;
-      if (count === 0) {
-        setRowCounts([]);
-        return;
-      }
-      const aspect = window.innerWidth / Math.max(window.innerHeight, 1);
-      let rows = Math.round(Math.sqrt(count / aspect));
-      rows = Math.max(1, Math.min(rows, count));
-      const base = Math.floor(count / rows);
-      const extra = count % rows;
-      const counts = [];
-      for (let i = 0; i < rows; i++) {
-        counts.push(base + (i < extra ? 1 : 0));
-      }
-      setRowCounts(counts);
+      setGrid(
+        computeGrid(
+          photos.length,
+          window.innerWidth,
+          Math.max(window.innerHeight, 1)
+        )
+      );
     }
     recompute();
     window.addEventListener("resize", recompute);
@@ -146,57 +184,40 @@ export default function WallPage() {
 
       <div
         style={{
-          display: "flex",
-          flexDirection: "column",
+          display: "grid",
+          gridTemplateColumns: `repeat(${grid.cols}, 1fr)`,
+          gridTemplateRows: `repeat(${grid.rows}, 1fr)`,
           width: "100vw",
           height: "100vh",
         }}
       >
-        {(() => {
-          let idx = 0;
-          return rowCounts.map((rowCount, rowIndex) => {
-            const rowPhotos = photos.slice(idx, idx + rowCount);
-            idx += rowCount;
-            return (
-              <div
-                key={rowIndex}
-                style={{
-                  display: "flex",
-                  flex: 1,
-                  minHeight: 0,
-                }}
-              >
-                {rowPhotos.map((photo) => (
-                  <div
-                    key={photo.id}
-                    onClick={() => setSelectedId(photo.id)}
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      overflow: "hidden",
-                      position: "relative",
-                      background: "#1a1a1c",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={photo.url}
-                      alt=""
-                      loading="lazy"
-                      style={{
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                        display: "block",
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
-            );
-          });
-        })()}
+        {photos.map((photo) => (
+          <div
+            key={photo.id}
+            onClick={() => setSelectedId(photo.id)}
+            style={{
+              minWidth: 0,
+              minHeight: 0,
+              overflow: "hidden",
+              position: "relative",
+              background: "#1a1a1c",
+              cursor: "pointer",
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={photo.url}
+              alt=""
+              loading="lazy"
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                display: "block",
+              }}
+            />
+          </div>
+        ))}
       </div>
 
       {selectedId &&
