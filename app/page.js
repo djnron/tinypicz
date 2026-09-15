@@ -191,9 +191,19 @@ export default function WallPage() {
           height: "100vh",
         }}
       >
-        {photos.map((photo) => (
+        {/* A grid with all-equal cells can't always hold exactly as many
+            photos as there are: 5 photos sit on a 3x2 wall, and the slot
+            count never shrinks as photos arrive. Rather than leave those
+            cells blank, fill them by cycling back through the photos. Every
+            cell stays the same size, nothing gets elongated, and the wall is
+            full at every count — a photo just appears twice until the next
+            upload takes the slot for real. Cycling from the start keeps a
+            repeat as far from its original as the reading order allows. */}
+        {Array.from({ length: photos.length ? grid.cols * grid.rows : 0 }, (_, slot) => {
+          const photo = photos[slot % photos.length];
+          return (
           <div
-            key={photo.id}
+            key={`${photo.id}-${slot}`}
             onClick={() => setSelectedId(photo.id)}
             style={{
               minWidth: 0,
@@ -217,7 +227,8 @@ export default function WallPage() {
               }}
             />
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {selectedId &&
