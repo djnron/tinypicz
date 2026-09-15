@@ -5,61 +5,60 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const POLL_MS = 5000;
 const PASSCODE_STORAGE_KEY = "photo-wall-upload-passcode";
 
-// How elongated a single photo may get before we'd rather leave a slot or
-// two empty than render slivers. 2.5 means a photo never gets more than
-// 2.5x wider than it is tall, or vice versa.
-const MAX_SKEW = Math.log(2.5);
-
-// Pick the grid for `count` photos, given that it must have at least
-// `minSlots` cells. Every cell is the same size, so whatever this returns,
-// all photos render identically.
-function bestGrid(count, minSlots, vw, vh) {
-  const need = Math.max(count, minSlots, 1);
-
-  // Preferred: use every slot exactly, wasting no space.
-  let exact = null;
-  for (let rows = 1; rows <= need; rows++) {
-    if (need % rows !== 0) continue;
-    const cols = need / rows;
-    const skew = Math.abs(Math.log(vw / cols / (vh / rows)));
-    if (!exact || skew < exact.skew) exact = { rows, cols, skew };
-  }
-  if (exact && exact.skew <= MAX_SKEW) {
-    return { cols: exact.cols, rows: exact.rows };
-  }
-
-  // Fallback for counts like 7 or 13, where an exact fit would mean very
-  // thin photos: the best-shaped grid that still holds them all.
+// The wall is a fixed amount of space — one screen — divided evenly among
+// however many photos are on it. Every photo gets exactly 1/N of the screen,
+// so each new upload takes a share away from everyone already there: 1 photo
+// fills the page, 2 get half each, 3 a third, and on down toward a pixel.
+//
+// A single uniform grid can't do that. Its cells come in whole rows and
+// columns, so the size only changes when the photo count crosses a
+// factorization — 5 and 6 photos would render identically, and so would 13,
+// 14 and 15. Sizes would sit still for uploads at a time, and awkward counts
+// would leave holes.
+//
+// Rows of differing heights can. Give a row holding k of the N photos a
+// height of k/N of the screen, and each photo in it 1/k of the width: every
+// photo comes out at (1/k) x (k/N) = 1/N of the screen, whatever k is. The
+// rows tile the page exactly, so there is nothing left blank and nothing has
+// to be repeated to fill space.
+//
+// That leaves only the shape of each photo to choose, which is what the row
+// split decides: spreading N photos over more rows makes them wider and
+// shorter, fewer rows makes them narrower and taller. Try every split and
+// keep the one whose worst-shaped photo is closest to square.
+function rowsFor(count, vw, vh) {
   let best = null;
-  for (let rows = 1; rows <= need; rows++) {
-    const cols = Math.ceil(need / rows);
-    const cw = vw / cols;
-    const ch = vh / rows;
-    const score = (cw * ch) / (1 + Math.abs(Math.log(cw / ch)));
-    if (!best || score > best.score) best = { rows, cols, score };
-  }
-  return { cols: best.cols, rows: best.rows };
-}
+  for (let rows = 1; rows <= count; rows++) {
+    const base = Math.floor(count / rows);
+    const extra = count % rows;
+    const counts = [];
+    for (let i = 0; i < rows; i++) counts.push(base + (i < extra ? 1 : 0));
 
-// Walk up from 1 photo to `count`, never letting the grid give back slots.
-// Without this, a count that happens to factor tidily (14 = 7x2) would make
-// every photo grow compared to the count before it (13), which reads as a
-// glitch: adding a photo should only ever take space away.
-function computeGrid(count, vw, vh) {
-  if (count <= 0) return { cols: 1, rows: 1 };
-  let slots = 1;
-  let chosen = { cols: 1, rows: 1 };
-  for (let n = 1; n <= count; n++) {
-    chosen = bestGrid(n, slots, vw, vh);
-    slots = chosen.cols * chosen.rows;
+    // How far from square this split leaves its worst photo, and (to break
+    // ties between splits) how far from square it leaves the wall overall.
+    let worst = 0;
+    let overall = 0;
+    for (const k of counts) {
+      const skew = Math.abs(Math.log(vw / k / ((vh * k) / count)));
+      worst = Math.max(worst, skew);
+      overall += skew * k;
+    }
+
+    if (
+      !best ||
+      worst < best.worst - 1e-9 ||
+      (Math.abs(worst - best.worst) < 1e-9 && overall < best.overall)
+    ) {
+      best = { counts, worst, overall };
+    }
   }
-  return chosen;
+  return best.counts;
 }
 
 export default function WallPage() {
   const [photos, setPhotos] = useState([]);
   const [loaded, setLoaded] = useState(false);
-  const [grid, setGrid] = useState({ cols: 1, rows: 1 });
+  const [rowCounts, setRowCounts] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -86,12 +85,10 @@ export default function WallPage() {
 
   useEffect(() => {
     function recompute() {
-      setGrid(
-        computeGrid(
-          photos.length,
-          window.innerWidth,
-          Math.max(window.innerHeight, 1)
-        )
+      setRowCounts(
+        photos.length
+          ? rowsFor(photos.length, window.innerWidth, Math.max(window.innerHeight, 1))
+          : []
       );
     }
     recompute();
@@ -182,53 +179,54 @@ export default function WallPage() {
         </div>
       )}
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(${grid.cols}, 1fr)`,
-          gridTemplateRows: `repeat(${grid.rows}, 1fr)`,
-          width: "100vw",
-          height: "100vh",
-        }}
-      >
-        {/* A grid with all-equal cells can't always hold exactly as many
-            photos as there are: 5 photos sit on a 3x2 wall, and the slot
-            count never shrinks as photos arrive. Rather than leave those
-            cells blank, fill them by cycling back through the photos. Every
-            cell stays the same size, nothing gets elongated, and the wall is
-            full at every count — a photo just appears twice until the next
-            upload takes the slot for real. Cycling from the start keeps a
-            repeat as far from its original as the reading order allows. */}
-        {Array.from({ length: photos.length ? grid.cols * grid.rows : 0 }, (_, slot) => {
-          const photo = photos[slot % photos.length];
-          return (
-          <div
-            key={`${photo.id}-${slot}`}
-            onClick={() => setSelectedId(photo.id)}
-            style={{
-              minWidth: 0,
-              minHeight: 0,
-              overflow: "hidden",
-              position: "relative",
-              background: "#1a1a1c",
-              cursor: "pointer",
-            }}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={photo.url}
-              alt=""
-              loading="lazy"
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                display: "block",
-              }}
-            />
-          </div>
-          );
-        })}
+      <div style={{ width: "100vw", height: "100vh" }}>
+        {(() => {
+          let taken = 0;
+          return rowCounts.map((rowCount, rowIndex) => {
+            const rowPhotos = photos.slice(taken, taken + rowCount);
+            taken += rowCount;
+            return (
+              <div
+                key={rowIndex}
+                style={{
+                  display: "flex",
+                  // The row's share of the screen is its share of the photos,
+                  // which is what makes every photo the same size.
+                  height: `${(rowCount / photos.length) * 100}%`,
+                }}
+              >
+                {rowPhotos.map((photo) => (
+                  <div
+                    key={photo.id}
+                    onClick={() => setSelectedId(photo.id)}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      minHeight: 0,
+                      overflow: "hidden",
+                      position: "relative",
+                      background: "#1a1a1c",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={photo.url}
+                      alt=""
+                      loading="lazy"
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "cover",
+                        display: "block",
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            );
+          });
+        })()}
       </div>
 
       {selectedId &&
