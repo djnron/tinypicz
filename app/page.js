@@ -24,10 +24,20 @@ const PASSCODE_STORAGE_KEY = "photo-wall-upload-passcode";
 //
 // That leaves only the shape of each photo to choose, which is what the row
 // split decides: spreading N photos over more rows makes them wider and
-// shorter, fewer rows makes them narrower and taller. Try every split and
-// keep the one whose worst-shaped photo is closest to square.
+// shorter, fewer rows makes them narrower and taller.
+//
+// Splits where every row holds the same number of photos are worth more than
+// their shape alone: they make every photo identical in both dimensions, not
+// merely equal in area — 14 photos as [7,7] is a 7x2 grid. So take the
+// best-shaped even split whenever it is not badly out of shape, and only when
+// there is none (5, 7, 11, 13 and the other counts that don't factor) settle
+// for uneven rows, which still hold the areas exactly equal.
+const MAX_GRID_SKEW = Math.log(2.5);
+
 function rowsFor(count, vw, vh) {
   let best = null;
+  let bestEven = null;
+
   for (let rows = 1; rows <= count; rows++) {
     const base = Math.floor(count / rows);
     const extra = count % rows;
@@ -44,15 +54,15 @@ function rowsFor(count, vw, vh) {
       overall += skew * k;
     }
 
-    if (
-      !best ||
-      worst < best.worst - 1e-9 ||
-      (Math.abs(worst - best.worst) < 1e-9 && overall < best.overall)
-    ) {
-      best = { counts, worst, overall };
-    }
+    const candidate = { counts, worst, overall };
+    const better = (a, b) =>
+      !b || a.worst < b.worst - 1e-9 || (Math.abs(a.worst - b.worst) < 1e-9 && a.overall < b.overall);
+
+    if (better(candidate, best)) best = candidate;
+    if (extra === 0 && better(candidate, bestEven)) bestEven = candidate;
   }
-  return best.counts;
+
+  return bestEven && bestEven.worst <= MAX_GRID_SKEW ? bestEven.counts : best.counts;
 }
 
 export default function WallPage() {
