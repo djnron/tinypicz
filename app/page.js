@@ -261,7 +261,6 @@ export default function WallPage() {
         ref={fileInputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         onChange={handleFileChosen}
         style={{ display: "none" }}
       />
